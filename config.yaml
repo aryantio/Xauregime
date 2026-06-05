@@ -54,6 +54,12 @@ bias:
     Deflation:    {gold: 0,  silver: -2}
   real_yield_overlay: true
 
+fomc:
+  enabled: true             # set false to skip FOMC overlay entirely
+  gold_weight: 0.5          # how much the FOMC score adjusts gold bias (-2..+2 × weight)
+  silver_weight: 0.2        # silver is less Fed-sensitive than gold
+  anthropic_key_env: "ANTHROPIC_API_KEY"
+
 storage:
   backend: "sql"
   dir: "data"               # fallback dir if you ever switch back to parquet

@@ -57,8 +57,13 @@ st.caption(f"As of {df.index[-1].date()}  ·  source: {cfg.data.source}")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Committed regime", reg_now)
-c2.metric("Gold bias",   bias_now.get("gold_bias",   latest["gold_bias"]))
-c3.metric("Silver bias", bias_now.get("silver_bias", latest["silver_bias"]))
+# prefer FOMC-adjusted bias if available, fall back to base
+gold_bias_show   = latest.get("gold_bias_adj",   latest["gold_bias"])
+silver_bias_show = latest.get("silver_bias_adj", latest["silver_bias"])
+gold_delta   = f"base: {latest['gold_bias']}"   if "gold_bias_adj"   in latest.index else ""
+silver_delta = f"base: {latest['silver_bias']}" if "silver_bias_adj" in latest.index else ""
+c2.metric("Gold bias",   gold_bias_show,   delta=gold_delta   or None)
+c3.metric("Silver bias", silver_bias_show, delta=silver_delta or None)
 if "hmm_confidence" in df.columns:
     c4.metric("HMM confidence", f"{latest['hmm_confidence']*100:.0f}%")
 
@@ -98,6 +103,36 @@ else:
                f"Streak: {ts['streak']} days.")
 
 st.divider()
+
+# ── FOMC overlay panel ────────────────────────────────────────────────────
+if "fomc_score" in df.columns:
+    fomc_score = latest.get("fomc_score", 0)
+    fomc_label = latest.get("fomc_label", "Neutral")
+    FOMC_COLOR = {
+        "Very Dovish": "🟢", "Dovish": "🟡",
+        "Neutral": "⚪",
+        "Hawkish": "🟠", "Very Hawkish": "🔴",
+    }
+    icon = FOMC_COLOR.get(fomc_label, "⚪")
+    st.subheader(f"{icon} FOMC stance: {fomc_label}  ({fomc_score:+d})")
+
+    fa, fb, fc, fd = st.columns(4)
+    fa.metric("FOMC score",        f"{fomc_score:+d} / ±2")
+    fb.metric("Gold bias (base)",  latest["gold_bias"])
+    fc.metric("Gold bias (FOMC-adjusted)", latest.get("gold_bias_adj", latest["gold_bias"]))
+
+    # show last 5 FOMC meetings from DB
+    try:
+        fomc_hist = Store(cfg).load("fomc_scores").sort_index(ascending=False).head(6)
+        fomc_hist.index = fomc_hist.index.date
+        with st.expander("Last 6 FOMC meetings"):
+            st.dataframe(
+                fomc_hist[["score", "label", "reasoning"]],
+                use_container_width=True,
+            )
+    except Exception:
+        pass
+    st.divider()
 
 # --- bull/bear probability gauges for current regime ---
 st.subheader(f"Probability outlook — {reg_now} regime (20-day horizon)")
