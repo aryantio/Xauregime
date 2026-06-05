@@ -1,0 +1,53 @@
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-regime}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-regime}
+      POSTGRES_DB:       ${POSTGRES_DB:-regimedb}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"          # expose so you can connect with psql / DBeaver
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-regime} -d ${POSTGRES_DB:-regimedb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── one-shot pipeline (FRED -> feature engineering -> regime -> DB) ─────────
+  pipeline:
+    build: .
+    command: python -m src.pipeline
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      FRED_API_KEY:  ${FRED_API_KEY}
+      REGIME_DB_URL: postgresql://${POSTGRES_USER:-regime}:${POSTGRES_PASSWORD:-regime}@db:5432/${POSTGRES_DB:-regimedb}
+    restart: "no"
+
+  # ── Streamlit dashboard (reads from DB) ────────────────────────────────────
+  dashboard:
+    build: .
+    command: >
+      streamlit run dashboard/app.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
+    ports:
+      - "8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+      pipeline:
+        condition: service_completed_successfully
+    environment:
+      REGIME_DB_URL: postgresql://${POSTGRES_USER:-regime}:${POSTGRES_PASSWORD:-regime}@db:5432/${POSTGRES_DB:-regimedb}
+    restart: unless-stopped
+
+volumes:
+  pg_data:

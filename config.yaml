@@ -1,0 +1,60 @@
+# =============================================================
+# Regime Detector configuration
+# =============================================================
+
+data:
+  source: "live"
+  start_date: "2016-01-01"
+  fred_api_key_env: "FRED_API_KEY"
+
+  fred_series:
+    dgs10:   "DGS10"          # nominal 10Y yield
+    dfii10:  "DFII10"         # 10Y real yield (TIPS)
+    t10yie:  "T10YIE"         # 10Y breakeven inflation
+    vix:     "VIXCLS"         # equity vol / risk-off proxy
+    oil:     "DCOILWTICO"     # WTI crude
+    # --- growth composite (new) ---
+    t10y2y:  "T10Y2Y"         # 10Y-2Y yield curve spread (daily, 1d lag)
+    hy_oas:  "BAMLH0A0HYM2"   # US HY credit spread OAS  (daily, 2d lag)
+    icsa:    "ICSA"            # initial jobless claims    (weekly, 6d lag)
+
+  yf_tickers:
+    gold: "GC=F"
+    silver: "SI=F"
+    copper: "HG=F"
+    dxy: "DX-Y.NYB"
+
+features:
+  zscore_window: 252        # ~1y rolling window for all z-scores
+  momentum_window: 60       # lookback for inflation momentum
+  real_yield_window: 20     # short window for real-yield trend overlay
+  vol_window: 20
+  deadband: 0.15
+  # growth composite weights (must sum to 1.0)
+  growth_weights:
+    yield_curve: 0.40       # T10Y2Y level  — most predictive recession signal
+    hy_spread:   0.35       # HY OAS (inverted) — credit stress = growth risk
+    jobless:     0.25       # ICSA 4w change (inverted) — labour market pulse
+  claims_window: 4          # weeks to diff jobless claims (removes seasonality)
+
+regime:
+  confirm_days: 10
+  min_dwell: 15
+
+  hmm:
+    enabled: true
+    n_states: 3
+    seed: 42
+
+bias:
+  base:
+    Stagflation:  {gold: 2,  silver: 1}
+    Reflation:    {gold: 1,  silver: 2}
+    Goldilocks:   {gold: -1, silver: -1}
+    Deflation:    {gold: 0,  silver: -2}
+  real_yield_overlay: true
+
+storage:
+  backend: "sql"
+  dir: "data"               # fallback dir if you ever switch back to parquet
+  sql_url_env: "REGIME_DB_URL"
