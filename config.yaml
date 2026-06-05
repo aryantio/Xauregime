@@ -36,6 +36,9 @@ features:
     hy_spread:   0.35       # HY OAS (inverted) — credit stress = growth risk
     jobless:     0.25       # ICSA 4w change (inverted) — labour market pulse
   claims_window: 4          # weeks to diff jobless claims (removes seasonality)
+  # inflation momentum params
+  ema_fast: 12              # fast EMA span for EMA crossover momentum
+  ema_slow: 26              # slow EMA span
 
 regime:
   confirm_days: 10
@@ -47,11 +50,16 @@ regime:
     seed: 42
 
 bias:
+  # Data-driven base scores derived from 2016-2026 historical bull% at 20d horizon:
+  #   Goldilocks  gold 75.4% bull → +2   silver 63.1% → +1
+  #   Reflation   gold 64.0% bull → +1   silver 59.1% → +1
+  #   Deflation   gold 57.2% bull → +1   silver 55.2% → 0
+  #   Stagflation gold 35.6% bull → -1   silver 36.0% → -1
   base:
-    Stagflation:  {gold: 2,  silver: 1}
-    Reflation:    {gold: 1,  silver: 2}
-    Goldilocks:   {gold: -1, silver: -1}
-    Deflation:    {gold: 0,  silver: -2}
+    Stagflation:  {gold: -1, silver: -1}
+    Reflation:    {gold:  1, silver:  1}
+    Goldilocks:   {gold:  2, silver:  1}
+    Deflation:    {gold:  1, silver:  0}
   real_yield_overlay: true
 
 fomc:

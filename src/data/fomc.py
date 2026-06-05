@@ -199,20 +199,55 @@ def build_fomc_overlay(store, cfg, start_date: str = "2016-01-01") -> pd.DataFra
         combined = existing
         print("[fomc] no new meetings to score")
 
-    # forward-fill to a daily business-day index
+    # ── compute surprise = score change vs prior meeting ────────────────────
+    # Surprise is what gold actually reacts to: a pivot from Hawkish→Dovish
+    # is a +2 surprise regardless of the absolute level.
+    # Decay: the surprise signal fades linearly to 0 over 45 trading days
+    # (the typical inter-meeting window) so it doesn't permanently colour
+    # the bias the way the raw forward-fill did.
+    combined = combined.sort_index()
+    combined["surprise"] = combined["score"].diff().fillna(0)
+
     bday_idx = pd.date_range(start_date, pd.Timestamp.today(), freq="B")
-    daily_score = (
-        combined["score"]
-        .reindex(bday_idx, method=None)
-        .ffill()
-        .fillna(0)
-        .rename("fomc_score")
-    )
-    daily_label = (
-        combined["label"]
-        .reindex(bday_idx, method=None)
-        .ffill()
-        .fillna("Neutral")
-        .rename("fomc_label")
-    )
-    return pd.DataFrame({"fomc_score": daily_score, "fomc_label": daily_label})
+
+    # forward-fill raw score + label (context / display only)
+    daily_score = combined["score"].reindex(bday_idx).ffill().fillna(0).rename("fomc_score")
+    daily_label = combined["label"].reindex(bday_idx).ffill().fillna("Neutral").rename("fomc_label")
+
+    # build decayed surprise signal
+    # On meeting day: surprise value. Linearly fades to 0 over DECAY_DAYS.
+    DECAY_DAYS = 45
+    surprise_raw = combined["surprise"].reindex(bday_idx).fillna(0)
+    decayed = []
+    current_surprise = 0.0
+    days_held = 0
+    for val in surprise_raw:
+        if val != 0:                        # new meeting — reset
+            current_surprise = float(val)
+            days_held = 0
+        fade = max(0.0, 1.0 - days_held / DECAY_DAYS)
+        decayed.append(round(current_surprise * fade, 3))
+        days_held += 1
+
+    daily_surprise = pd.Series(decayed, index=bday_idx, name="fomc_surprise")
+
+    # surprise label for display
+    def _surprise_label(v):
+        if   v >  0.5: return "Dovish Surprise"
+        elif v >  0:   return "Mild Dovish Surprise"
+        elif v == 0:   return "No Surprise"
+        elif v > -0.5: return "Mild Hawkish Surprise"
+        else:          return "Hawkish Surprise"
+
+    daily_surprise_label = daily_surprise.map(_surprise_label).rename("fomc_surprise_label")
+
+    print(f"[fomc] surprise distribution: "
+          + ", ".join(f"{v:.1f}({(daily_surprise==v).sum()}d)"
+                      for v in sorted(combined['surprise'].unique())))
+
+    return pd.DataFrame({
+        "fomc_score":         daily_score,
+        "fomc_label":         daily_label,
+        "fomc_surprise":      daily_surprise,
+        "fomc_surprise_label": daily_surprise_label,
+    })

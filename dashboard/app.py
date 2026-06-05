@@ -105,29 +105,40 @@ else:
 st.divider()
 
 # ── FOMC overlay panel ────────────────────────────────────────────────────
-if "fomc_score" in df.columns:
-    fomc_score = latest.get("fomc_score", 0)
-    fomc_label = latest.get("fomc_label", "Neutral")
-    FOMC_COLOR = {
-        "Very Dovish": "🟢", "Dovish": "🟡",
-        "Neutral": "⚪",
+if "fomc_surprise" in df.columns:
+    fomc_score    = latest.get("fomc_score", 0)
+    fomc_label    = latest.get("fomc_label", "Neutral")
+    fomc_surprise = latest.get("fomc_surprise", 0)
+    surprise_label = latest.get("fomc_surprise_label", "No Surprise")
+
+    STANCE_ICON = {
+        "Very Dovish": "🟢", "Dovish": "🟡", "Neutral": "⚪",
         "Hawkish": "🟠", "Very Hawkish": "🔴",
     }
-    icon = FOMC_COLOR.get(fomc_label, "⚪")
-    st.subheader(f"{icon} FOMC stance: {fomc_label}  ({fomc_score:+d})")
+    SURPRISE_ICON = {
+        "Dovish Surprise": "🟢", "Mild Dovish Surprise": "🟡",
+        "No Surprise": "⚪",
+        "Mild Hawkish Surprise": "🟠", "Hawkish Surprise": "🔴",
+    }
+    st.subheader(f"{STANCE_ICON.get(fomc_label,'⚪')} FOMC: {fomc_label} "
+                 f"| {SURPRISE_ICON.get(surprise_label,'⚪')} Surprise: {surprise_label}")
 
     fa, fb, fc, fd = st.columns(4)
-    fa.metric("FOMC score",        f"{fomc_score:+d} / ±2")
-    fb.metric("Gold bias (base)",  latest["gold_bias"])
-    fc.metric("Gold bias (FOMC-adjusted)", latest.get("gold_bias_adj", latest["gold_bias"]))
+    fa.metric("Current stance",        f"{fomc_label} ({fomc_score:+.0f})")
+    fb.metric("Surprise signal",       f"{fomc_surprise:+.2f}",
+              "fades over 45 trading days")
+    fc.metric("Gold bias (base)",      latest["gold_bias"])
+    fd.metric("Gold bias (surprise-adjusted)", latest.get("gold_bias_adj", latest["gold_bias"]),
+              delta=None if latest.get("gold_bias_adj") == latest["gold_bias"]
+              else f"was {latest['gold_bias']}")
 
-    # show last 5 FOMC meetings from DB
     try:
-        fomc_hist = Store(cfg).load("fomc_scores").sort_index(ascending=False).head(6)
+        fomc_hist = Store(cfg).load("fomc_scores").sort_index(ascending=False).head(8)
         fomc_hist.index = fomc_hist.index.date
-        with st.expander("Last 6 FOMC meetings"):
+        fomc_hist["surprise"] = fomc_hist["score"].diff(-1).fillna(0) * -1
+        with st.expander("Last 8 FOMC meetings — score & surprise"):
             st.dataframe(
-                fomc_hist[["score", "label", "reasoning"]],
+                fomc_hist[["score", "label", "surprise", "reasoning"]],
                 use_container_width=True,
             )
     except Exception:
@@ -191,15 +202,104 @@ with st.expander("Growth composite breakdown"):
               "falling = labour strong" if latest["claims_z"] > 0 else "rising = labour weakening")
 
 with st.expander("Inflation composite breakdown"):
-    i1, i2, i3 = st.columns(3)
-    i1.metric("Inflation z (composite)",  f"{latest['inflation_z']:+.2f}",
+    i1, i2, i3, i4 = st.columns(4)
+    i1.metric("Composite z",              f"{latest['inflation_z']:+.2f}",
               "above avg" if latest["inflation_z"] > 0 else "below avg")
-    i2.metric("Level z (60% weight)",     f"{latest['infl_level_z']:+.2f}",
-              "breakeven above historical avg" if latest["infl_level_z"] > 0
-              else "breakeven below historical avg")
-    i3.metric("Momentum z (40% weight)",  f"{latest['infl_mom_z']:+.2f}",
-              "inflation accelerating" if latest["infl_mom_z"] > 0
-              else "inflation decelerating")
+    i2.metric("Level z (60%)",            f"{latest['infl_level_z']:+.2f}",
+              "above hist. avg" if latest["infl_level_z"] > 0
+              else "below hist. avg")
+    i3.metric("EMA momentum z (25%)",     f"{latest['infl_mom_z']:+.2f}",
+              "accelerating" if latest["infl_mom_z"] > 0 else "decelerating")
+    i4.metric("OLS slope z (15%)",        f"{latest.get('infl_ols_z', 0):+.2f}",
+              "uptrend" if latest.get("infl_ols_z", 0) > 0 else "downtrend")
+
+# ---------- inflation axis chart ----------
+st.subheader("Inflation axis — 2016 to today")
+
+# join with raw to get the actual breakeven level
+raw_df = Store(cfg).load("raw")[["t10yie"]].rename(columns={"t10yie": "breakeven"})
+infl_df = df[["inflation_z", "infl_level_z", "infl_mom_z", "infl_ols_z", "regime"]].join(raw_df)
+
+fig_infl = go.Figure()
+
+# regime background shading
+for _, b in infl_df.groupby((infl_df["regime"] != infl_df["regime"].shift()).cumsum()):
+    fig_infl.add_vrect(
+        x0=b.index.min(), x1=b.index.max(),
+        fillcolor=REGIME_COLORS.get(b["regime"].iloc[0], "#ccc"),
+        opacity=0.08, line_width=0,
+    )
+
+# zero line
+fig_infl.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)", line_width=1)
+
+# component traces (secondary y = breakeven level)
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["infl_level_z"],
+    name="Level z (60%)", line=dict(color="#f39c12", width=1, dash="dot"),
+    opacity=0.7,
+))
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["infl_mom_z"],
+    name="EMA momentum z (25%)", line=dict(color="#3498db", width=1, dash="dot"),
+    opacity=0.7,
+))
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["infl_ols_z"],
+    name="OLS slope z (15%)", line=dict(color="#9b59b6", width=1, dash="dot"),
+    opacity=0.7,
+))
+# composite — thick, prominent
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["inflation_z"],
+    name="Composite inflation_z", line=dict(color="#e74c3c", width=2.5),
+))
+# actual breakeven level on secondary y-axis
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["breakeven"],
+    name="T10YIE breakeven %", line=dict(color="rgba(255,255,255,0.4)", width=1),
+    yaxis="y2",
+))
+
+# fill above/below zero for composite
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["inflation_z"].clip(lower=0),
+    fill="tozeroy", fillcolor="rgba(231,76,60,0.12)",
+    line=dict(width=0), showlegend=False, hoverinfo="skip",
+))
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["inflation_z"].clip(upper=0),
+    fill="tozeroy", fillcolor="rgba(52,152,219,0.12)",
+    line=dict(width=0), showlegend=False, hoverinfo="skip",
+))
+
+fig_infl.update_layout(
+    height=420,
+    margin=dict(t=10, b=10),
+    legend=dict(orientation="h", y=-0.15),
+    yaxis=dict(
+        title="Z-score",
+        zeroline=True, zerolinecolor="rgba(255,255,255,0.2)",
+        gridcolor="rgba(255,255,255,0.05)",
+    ),
+    yaxis2=dict(
+        title="Breakeven %",
+        overlaying="y", side="right",
+        gridcolor="rgba(0,0,0,0)",
+        tickformat=".2f",
+    ),
+    hovermode="x unified",
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+)
+
+st.plotly_chart(fig_infl, use_container_width=True)
+st.caption(
+    "Red shading = inflation above average (composite > 0)  ·  "
+    "Blue shading = below average  ·  "
+    "Shaded bands = committed regime  ·  "
+    + "  ".join(k for k in REGIME_COLORS)
+)
 
 # ---------- 3. timeline ----------
 st.subheader("Regime history vs price")

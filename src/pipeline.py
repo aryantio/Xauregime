@@ -34,7 +34,7 @@ def run(cfg=None) -> pd.DataFrame:
 
     result = pd.concat([candidate, bias, feats[["gold", "silver",
                         "growth_z", "yc_z", "hy_z", "claims_z",
-                        "inflation_z", "infl_level_z", "infl_mom_z",
+                        "inflation_z", "infl_level_z", "infl_mom_z", "infl_ols_z",
                         "real_yield", "real_yield_chg",
                         "gold_silver_ratio"]]], axis=1)
 
@@ -49,10 +49,12 @@ def run(cfg=None) -> pd.DataFrame:
                 store, cfg, start_date=cfg.data.start_date
             )
             # align to regime index
-            fomc_aligned = fomc_daily.reindex(result.index, method="ffill")
+            fomc_aligned = fomc_daily.reindex(result.index, method="ffill").fillna(0)
             result = pd.concat([result, fomc_aligned], axis=1)
 
-            # adjust gold/silver score using FOMC signal
+            # adjust gold/silver score using FOMC SURPRISE (not raw score)
+            # surprise is decayed linearly over 45 trading days so its
+            # influence fades between meetings rather than persisting forever.
             gw = cfg.fomc.gold_weight
             sw = cfg.fomc.silver_weight
             _LABELS = {
@@ -60,18 +62,19 @@ def run(cfg=None) -> pd.DataFrame:
                 -1: "Short", -2: "Strong Short"
             }
             def _clip(x): return max(-2, min(2, int(round(x))))
-            def _adj(base_score_col, weight):
+            def _adj(base_col, weight):
                 return result.apply(
-                    lambda r: _clip(r[base_score_col] + r["fomc_score"] * weight),
+                    lambda r: _clip(r[base_col] + r["fomc_surprise"] * weight),
                     axis=1
                 )
             result["gold_score_adj"]   = _adj("gold_score",   gw)
             result["silver_score_adj"] = _adj("silver_score", sw)
             result["gold_bias_adj"]    = result["gold_score_adj"].map(_LABELS)
             result["silver_bias_adj"]  = result["silver_score_adj"].map(_LABELS)
-            print(f"[fomc] overlay applied — today fomc_score="
-                  f"{result.iloc[-1].get('fomc_score', 'n/a')} "
-                  f"({result.iloc[-1].get('fomc_label', 'n/a')})")
+            latest = result.iloc[-1]
+            print(f"[fomc] overlay applied — surprise={latest.get('fomc_surprise', 0):+.2f} "
+                  f"({latest.get('fomc_surprise_label', 'n/a')}) | "
+                  f"gold: {latest['gold_bias']} → {latest.get('gold_bias_adj', latest['gold_bias'])}")
         except Exception as e:
             print(f"[fomc] SKIPPED — {e}")
 
