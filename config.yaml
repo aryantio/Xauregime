@@ -17,6 +17,9 @@ data:
     t10y2y:  "T10Y2Y"         # 10Y-2Y yield curve spread (daily, 1d lag)
     hy_oas:  "BAMLH0A0HYM2"   # US HY credit spread OAS  (daily, 2d lag)
     icsa:    "ICSA"            # initial jobless claims    (weekly, 6d lag)
+    # --- inflation context (monthly, 65d lag — display only, not used in z-score) ---
+    cpi:     "CPIAUCSL"       # CPI all items
+    core_pce: "PCEPILFE"      # Core PCE (Fed's preferred target)
 
   yf_tickers:
     gold: "GC=F"

@@ -216,13 +216,24 @@ with st.expander("Inflation composite breakdown"):
 # ---------- inflation axis chart ----------
 st.subheader("Inflation axis — 2016 to today")
 
-# join with raw to get the actual breakeven level
-raw_df = Store(cfg).load("raw")[["t10yie"]].rename(columns={"t10yie": "breakeven"})
-infl_df = df[["inflation_z", "infl_level_z", "infl_mom_z", "infl_ols_z", "regime"]].join(raw_df)
+# load raw series: breakeven, CPI, Core PCE
+raw_df = Store(cfg).load("raw")[["t10yie", "cpi", "core_pce"]]
+
+# compute YoY % for CPI and Core PCE (forward-filled monthly → use 252 bdays ≈ 1yr)
+raw_df["cpi_yoy"]      = raw_df["cpi"].pct_change(252) * 100
+raw_df["core_pce_yoy"] = raw_df["core_pce"].pct_change(252) * 100
+
+# deduplicate monthly series for cleaner plotting (keep first of each month)
+monthly_mask = raw_df[["cpi"]].resample("MS").first().index
+cpi_plot     = raw_df["cpi_yoy"].reindex(monthly_mask).dropna()
+pce_plot     = raw_df["core_pce_yoy"].reindex(monthly_mask).dropna()
+
+infl_df = df[["inflation_z", "infl_level_z", "infl_mom_z",
+              "infl_ols_z", "regime"]].join(raw_df[["t10yie"]])
 
 fig_infl = go.Figure()
 
-# regime background shading
+# ── regime background ────────────────────────────────────────────────────────
 for _, b in infl_df.groupby((infl_df["regime"] != infl_df["regime"].shift()).cumsum()):
     fig_infl.add_vrect(
         x0=b.index.min(), x1=b.index.max(),
@@ -230,63 +241,98 @@ for _, b in infl_df.groupby((infl_df["regime"] != infl_df["regime"].shift()).cum
         opacity=0.08, line_width=0,
     )
 
-# zero line
-fig_infl.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)", line_width=1)
+# ── Fed 2% target line (right axis) ─────────────────────────────────────────
+fig_infl.add_hline(
+    y=2.0, line_dash="dot", line_color="rgba(255,255,255,0.25)",
+    line_width=1, annotation_text="Fed 2% target",
+    annotation_position="top right",
+    annotation_font_color="rgba(255,255,255,0.4)",
+    yref="y2",
+)
 
-# component traces (secondary y = breakeven level)
+# ── z-score zero line ────────────────────────────────────────────────────────
+fig_infl.add_hline(
+    y=0, line_dash="dash",
+    line_color="rgba(255,255,255,0.25)", line_width=1,
+)
+
+# ── CPI YoY % — right axis ──────────────────────────────────────────────────
+fig_infl.add_trace(go.Scatter(
+    x=cpi_plot.index, y=cpi_plot,
+    name="CPI YoY %", mode="lines+markers",
+    line=dict(color="#e67e22", width=1.5),
+    marker=dict(size=4),
+    yaxis="y2", opacity=0.85,
+))
+
+# ── Core PCE YoY % — right axis ─────────────────────────────────────────────
+fig_infl.add_trace(go.Scatter(
+    x=pce_plot.index, y=pce_plot,
+    name="Core PCE YoY %", mode="lines+markers",
+    line=dict(color="#27ae60", width=1.5),
+    marker=dict(size=4),
+    yaxis="y2", opacity=0.85,
+))
+
+# ── T10YIE breakeven — right axis ───────────────────────────────────────────
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["t10yie"],
+    name="T10YIE breakeven %",
+    line=dict(color="rgba(189,195,199,0.6)", width=1),
+    yaxis="y2",
+))
+
+# ── z-score components — left axis ──────────────────────────────────────────
 fig_infl.add_trace(go.Scatter(
     x=infl_df.index, y=infl_df["infl_level_z"],
     name="Level z (60%)", line=dict(color="#f39c12", width=1, dash="dot"),
-    opacity=0.7,
+    opacity=0.6,
 ))
 fig_infl.add_trace(go.Scatter(
     x=infl_df.index, y=infl_df["infl_mom_z"],
     name="EMA momentum z (25%)", line=dict(color="#3498db", width=1, dash="dot"),
-    opacity=0.7,
+    opacity=0.6,
 ))
 fig_infl.add_trace(go.Scatter(
     x=infl_df.index, y=infl_df["infl_ols_z"],
     name="OLS slope z (15%)", line=dict(color="#9b59b6", width=1, dash="dot"),
-    opacity=0.7,
-))
-# composite — thick, prominent
-fig_infl.add_trace(go.Scatter(
-    x=infl_df.index, y=infl_df["inflation_z"],
-    name="Composite inflation_z", line=dict(color="#e74c3c", width=2.5),
-))
-# actual breakeven level on secondary y-axis
-fig_infl.add_trace(go.Scatter(
-    x=infl_df.index, y=infl_df["breakeven"],
-    name="T10YIE breakeven %", line=dict(color="rgba(255,255,255,0.4)", width=1),
-    yaxis="y2",
+    opacity=0.6,
 ))
 
-# fill above/below zero for composite
+# ── composite — thick, prominent — left axis ─────────────────────────────────
+fig_infl.add_trace(go.Scatter(
+    x=infl_df.index, y=infl_df["inflation_z"],
+    name="Composite inflation_z",
+    line=dict(color="#e74c3c", width=2.5),
+))
+
+# ── above/below-zero fill ───────────────────────────────────────────────────
 fig_infl.add_trace(go.Scatter(
     x=infl_df.index, y=infl_df["inflation_z"].clip(lower=0),
-    fill="tozeroy", fillcolor="rgba(231,76,60,0.12)",
+    fill="tozeroy", fillcolor="rgba(231,76,60,0.10)",
     line=dict(width=0), showlegend=False, hoverinfo="skip",
 ))
 fig_infl.add_trace(go.Scatter(
     x=infl_df.index, y=infl_df["inflation_z"].clip(upper=0),
-    fill="tozeroy", fillcolor="rgba(52,152,219,0.12)",
+    fill="tozeroy", fillcolor="rgba(52,152,219,0.10)",
     line=dict(width=0), showlegend=False, hoverinfo="skip",
 ))
 
 fig_infl.update_layout(
-    height=420,
-    margin=dict(t=10, b=10),
-    legend=dict(orientation="h", y=-0.15),
+    height=500,
+    margin=dict(t=15, b=10),
+    legend=dict(orientation="h", y=-0.18, font=dict(size=11)),
     yaxis=dict(
-        title="Z-score",
-        zeroline=True, zerolinecolor="rgba(255,255,255,0.2)",
+        title="Z-score (left)",
+        zeroline=True, zerolinecolor="rgba(255,255,255,0.15)",
         gridcolor="rgba(255,255,255,0.05)",
     ),
     yaxis2=dict(
-        title="Breakeven %",
+        title="% YoY / Breakeven % (right)",
         overlaying="y", side="right",
         gridcolor="rgba(0,0,0,0)",
-        tickformat=".2f",
+        tickformat=".1f",
+        ticksuffix="%",
     ),
     hovermode="x unified",
     plot_bgcolor="rgba(0,0,0,0)",
@@ -294,11 +340,21 @@ fig_infl.update_layout(
 )
 
 st.plotly_chart(fig_infl, use_container_width=True)
+
+# latest CPI / PCE callout
+latest_cpi = cpi_plot.dropna().iloc[-1]  if len(cpi_plot.dropna())  > 0 else float("nan")
+latest_pce = pce_plot.dropna().iloc[-1]  if len(pce_plot.dropna())  > 0 else float("nan")
+latest_bie = infl_df["t10yie"].dropna().iloc[-1] if len(infl_df["t10yie"].dropna()) > 0 else float("nan")
+
+ci1, ci2, ci3 = st.columns(3)
+ci1.metric("CPI YoY (latest monthly)",     f"{latest_cpi:.1f}%",  "65d lag — Apr data")
+ci2.metric("Core PCE YoY (latest monthly)", f"{latest_pce:.1f}%", "65d lag — Apr data")
+ci3.metric("T10YIE breakeven (today)",      f"{latest_bie:.2f}%", "1d lag — real-time")
 st.caption(
-    "Red shading = inflation above average (composite > 0)  ·  "
-    "Blue shading = below average  ·  "
-    "Shaded bands = committed regime  ·  "
-    + "  ".join(k for k in REGIME_COLORS)
+    "Left axis: z-scores — red composite + dotted components  ·  "
+    "Right axis: CPI YoY % 🟠 · Core PCE YoY % 🟢 · T10YIE breakeven % (grey)  ·  "
+    "Dotted horizontal = Fed 2% target  ·  "
+    "Regime bands: " + "  ".join(k for k in REGIME_COLORS)
 )
 
 # ---------- 3. timeline ----------
